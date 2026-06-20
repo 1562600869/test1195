@@ -9,7 +9,7 @@ from models import (
     validate_volunteer_id,
     validate_volunteer_type,
 )
-from storage import load_data, save_data
+from storage import load_data, transaction
 
 
 def add_volunteer(vid, name, phone, vtype):
@@ -17,18 +17,18 @@ def add_volunteer(vid, name, phone, vtype):
     validate_phone(phone)
     validate_volunteer_type(vtype)
 
-    data = load_data()
-    if vid in data["volunteers"]:
-        raise ValueError(f"志愿者ID已存在：{vid}")
+    with transaction() as data:
+        if vid in data["volunteers"]:
+            raise ValueError(f"志愿者ID已存在：{vid}")
 
-    data["volunteers"][vid] = {
-        "id": vid,
-        "name": name,
-        "phone": phone,
-        "type": vtype,
-        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    save_data(data)
+        data["volunteers"][vid] = {
+            "id": vid,
+            "name": name,
+            "phone": phone,
+            "type": vtype,
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
     return f"志愿者添加成功：{vid} {name}（{vtype}）"
 
 
@@ -37,27 +37,28 @@ def schedule_shift(vid, date_str, shift):
     validate_date(date_str)
     validate_shift(shift)
 
-    data = load_data()
-    if vid not in data["volunteers"]:
-        raise ValueError(f"志愿者ID不存在：{vid}")
+    with transaction() as data:
+        if vid not in data["volunteers"]:
+            raise ValueError(f"志愿者ID不存在：{vid}")
 
-    date_schedules = data["schedules"].setdefault(date_str, {})
-    for s_key, s_list in date_schedules.items():
-        if vid in s_list:
-            raise ValueError(f"志愿者 {vid} 在 {date_str} 已排有 {s_key} 班次")
+        date_schedules = data["schedules"].setdefault(date_str, {})
+        for s_key, s_list in date_schedules.items():
+            if vid in s_list:
+                raise ValueError(f"志愿者 {vid} 在 {date_str} 已排有 {s_key} 班次")
 
-    shift_list = date_schedules.setdefault(shift, [])
-    if len(shift_list) >= MAX_PER_SHIFT:
-        raise ValueError(
-            f"{date_str} {shift} 班次人数已达上限（{MAX_PER_SHIFT}人）"
-        )
+        shift_list = date_schedules.setdefault(shift, [])
+        if len(shift_list) >= MAX_PER_SHIFT:
+            raise ValueError(
+                f"{date_str} {shift} 班次人数已达上限（{MAX_PER_SHIFT}人）"
+            )
 
-    if vid in shift_list:
-        raise ValueError(f"志愿者 {vid} 在 {date_str} {shift} 已排班")
+        if vid in shift_list:
+            raise ValueError(f"志愿者 {vid} 在 {date_str} {shift} 已排班")
 
-    shift_list.append(vid)
-    save_data(data)
-    return f"排班成功：{vid} {data['volunteers'][vid]['name']} {date_str} {shift}"
+        shift_list.append(vid)
+        volunteer_name = data["volunteers"][vid]["name"]
+
+    return f"排班成功：{vid} {volunteer_name} {date_str} {shift}"
 
 
 def checkin_shift(vid, date_str, shift):
@@ -65,27 +66,28 @@ def checkin_shift(vid, date_str, shift):
     validate_date(date_str)
     validate_shift(shift)
 
-    data = load_data()
-    if vid not in data["volunteers"]:
-        raise ValueError(f"志愿者ID不存在：{vid}")
+    with transaction() as data:
+        if vid not in data["volunteers"]:
+            raise ValueError(f"志愿者ID不存在：{vid}")
 
-    date_schedules = data["schedules"].get(date_str, {})
-    shift_list = date_schedules.get(shift, [])
-    if vid not in shift_list:
-        raise ValueError(f"志愿者 {vid} 在 {date_str} {shift} 未排班，无法签到")
+        date_schedules = data["schedules"].get(date_str, {})
+        shift_list = date_schedules.get(shift, [])
+        if vid not in shift_list:
+            raise ValueError(f"志愿者 {vid} 在 {date_str} {shift} 未排班，无法签到")
 
-    checkin_key = f"{date_str}|{shift}|{vid}"
-    if checkin_key in data["checkins"]:
-        raise ValueError(f"志愿者 {vid} 在 {date_str} {shift} 已签到")
+        checkin_key = f"{date_str}|{shift}|{vid}"
+        if checkin_key in data["checkins"]:
+            raise ValueError(f"志愿者 {vid} 在 {date_str} {shift} 已签到")
 
-    data["checkins"][checkin_key] = {
-        "volunteer_id": vid,
-        "date": date_str,
-        "shift": shift,
-        "checkin_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    save_data(data)
-    return f"签到成功：{vid} {data['volunteers'][vid]['name']} {date_str} {shift}"
+        data["checkins"][checkin_key] = {
+            "volunteer_id": vid,
+            "date": date_str,
+            "shift": shift,
+            "checkin_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        volunteer_name = data["volunteers"][vid]["name"]
+
+    return f"签到成功：{vid} {volunteer_name} {date_str} {shift}"
 
 
 def stats_month(month_str):
